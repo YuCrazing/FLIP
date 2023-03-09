@@ -12,12 +12,11 @@ import time
 # TODO: velocities which are next to solid should be extraploated before and after solving pressure 
 
 
-ti.init(arch=ti.gpu, default_fp=ti.f32, debug=True)
+ti.init(arch=ti.cuda, default_fp=ti.f32, debug=False)
 
 
 res = 512
 dt = 2e-2 #2e-3 #2e-2
-substep = 1
 
 
 rho = 1000
@@ -348,64 +347,42 @@ def advect_particles():
 @ti.kernel
 def fill_matrix(A: ti.types.sparse_matrix_builder(), F_b: ti.types.ndarray()):
     for i, j in ti.ndrange(m_g, m_g):
-        # row = i * res + j
-        # center = 0.0
-        # if j != 0:
-        #     A[row, row - 1] += -1.0
-        #     center += 1.0
-        # if j != res - 1:
-        #     A[row, row + 1] += -1.0
-        #     center += 1.0
-        # if i != 0:
-        #     A[row, row - res] += -1.0
-        #     center += 1.0
-        # if i != res - 1:
-        #     A[row, row + res] += -1.0
-        #     center += 1.0
-        # A[row, row] += center
 
         I = i * m_g + j 
 
         if is_fluid(i, j):
-
-            k = 4.0
-
-            if is_solid(i-1, j):
-                k -= 1
-            elif not is_air(i-1, j):
-                A[I - m_g, I] -= 1.0
+            if not is_solid(i-1, j):
+                A[I, I] += 1.0
+                if not is_air(i-1, j):
+                    A[I - m_g, I] -= 1.0
             
-            if is_solid(i+1, j):
-                k -= 1
-            elif not is_air(i+1, j):
-                A[I + m_g, I] -= 1.0
+            if not is_solid(i+1, j):
+                A[I, I] += 1.0
+                if not is_air(i+1, j):
+                    A[I + m_g, I] -= 1.0
             
-            if is_solid(i, j-1):
-                k -= 1
-            elif not is_air(i, j-1):
-                A[I, I - 1] -= 1.0
-            
-            if is_solid(i, j+1):
-                k -= 1
-            elif not is_air(i, j+1):
-                A[I, I + 1] -= 1.0
-
-            A[I, I] += k
-            # A[I, I] += 1.0
-        
-        elif is_solid(i, j) or is_air(i, j):
+            if not is_solid(i, j-1):
+                A[I, I] += 1.0
+                if not is_air(i, j-1):
+                    A[I, I - 1] -= 1.0
+                
+            if not is_solid(i, j+1):
+                A[I, I] += 1.0
+                if not is_air(i, j+1):
+                    A[I, I + 1] -= 1.0
+        else:
+            #if is_solid(i, j) or is_air(i, j)
             A[I, I] += 1.0
-        # elif is_air(i, j):
-        #     A[I, I] += 1.0
-
 
     for I in ti.grouped(divergences):
         F_b[I[0] * m_g + I[1]] = - divergences[I] * dx * dx * rho / dt
+
 
 @ti.kernel
 def copy_pressure(p_in: ti.types.ndarray(), p_out: ti.template()):
     for I in ti.grouped(p_out):
         p_out[I] = p_in[I[0] * m_g + I[1]]
+
 
 frame = 0
 def step():
@@ -429,55 +406,19 @@ def step():
     solve_divergence()
 
 
+    # sparse matrix solver
     N = n_grid
     K = ti.linalg.SparseMatrixBuilder(N, N, max_num_triplets=N * 6)
     F_b = ti.ndarray(ti.f32, shape=N)
     fill_matrix(K, F_b)
-    # K.print_triplets()
-    # print(str(K))
     L = K.build()
-    # L.print_triplets()
-    
     solver = ti.linalg.SparseSolver(solver_type="LLT")
     solver.analyze_pattern(L)
-
-    # L_list = []
-    # print("[")
-    # for i in range(m_g * m_g):
-    #     print("[", end="")
-    #     L_list.append([])
-    #     for j in range(m_g * m_g):
-    #         print("{:4.1f}".format(L[[i, j]]) if abs(L[[i, j]]) > 1e-6 else "    ", end=("" if j==m_g*m_g-1 else ", "))
-    #         L_list[i].append(L[i, j])
-    #     print("]" if i==m_g*m_g-1 else "],")
-    # print("]")
-    # # print(L_list)
-    
-    
-    # import numpy as np
-    # L_np = np.array(L_list)
-
-    # def is_pos_def(x):
-    #     print(np.linalg.eigvals(x))
-    #     return np.all(np.linalg.eigvals(x) > 0)
-
-    # def check_symmetric(a, tol=1e-8):
-    #     return np.all(np.abs(a-a.T) < tol)
-    # def check_singular(x):
-    #     print(np.linalg.det(x))
-    #     if np.linalg.det(x) > 0:
-    #         return True
-    #     return False
-
-    # print(is_pos_def(L_np), check_symmetric(L_np), check_singular(L_np))
-    # chol_L = np.linalg.cholesky(L_np)
-
-
-
     solver.factorize(L)
     p = solver.solve(F_b)
     copy_pressure(p, pressures)
 
+    # jacobian iteration
     # for i in range(jacobi_iters):
     # 	global pressures, new_pressures
     # 	pressure_jacobi(pressures, new_pressures)
@@ -488,10 +429,6 @@ def step():
 
     grid_to_particle()
     advect_particles()
-
-
-
-
 
 
 
@@ -510,8 +447,7 @@ for frame in range(45000):
 
     gui.clear(0xFFFFFF)
 
-    for i in range(substep):
-        step()
+    step()
 
 
     # break
