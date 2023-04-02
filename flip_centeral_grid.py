@@ -7,7 +7,7 @@ import time
 ti.init(arch=ti.cuda, default_fp=ti.f32, debug=False)
 
 
-res = 512 * 3
+res = 512 * 4
 # dt = 1.6e-2 #2e-3 #2e-2
 dt = 2e-2
 
@@ -19,7 +19,7 @@ FLIP_blending = 0.0
 
 
 
-m_g = 64
+m_g = 8
 n_grid = m_g*m_g
 n_particle = n_grid*4
 
@@ -32,7 +32,7 @@ boundary_width = 2
 
 eps = 1e-5
 
-debug = False
+debug = True
 
 use_weight = False
 
@@ -73,7 +73,7 @@ def init_grid():
 def init_particle():
     for i in particle_position:
         # particle_position[i] = (ti.Vector([ti.random(), ti.random()])*0.5 + ti.Vector([0.25, 0.25])) * length
-        particle_position[i] = (ti.Vector([ti.random()*(1-6*dx), ti.random()*0.3]) + ti.Vector([2*dx, 2*dx])) * length
+        particle_position[i] = (ti.Vector([ti.random()*(1-12*dx), ti.random()*dx*5]) + ti.Vector([2*dx, 2*dx])) * length
         particle_velocity[i] = ti.Vector([0.0, 0.0])
 
 
@@ -412,8 +412,8 @@ def advect_particles():
             vel.y = 0
 
 
-        particle_position[k] = pos
         particle_velocity[k] = vel
+        particle_position[k] = pos
 
 
 frame = 0
@@ -460,8 +460,8 @@ def step():
 
     projection()
 
-    # for i in range(4):
-    #     extrapolate_velocity()
+    for i in range(4):
+        extrapolate_velocity()
 
 
     grid_to_particle()
@@ -523,9 +523,10 @@ for frame in range(45000):
                 gui.line([(i+1)*dx, j*dx], [(i+1)*dx, (j+1)*dx], color = 0xFF0000)
                 gui.line([(i+1)*dx, j*dx], [i*dx, j*dx], color = 0xFF0000)
                 gui.text(f'{pressures[i, j]:.2f}p {types[i, j]}t', pos=((i+0.5)/m_g - dx * 0.25, (j+0.75)/m_g), color=0xFF0000)
-                gui.text(f'({velocities_before_projection[i, j].x:.2f}, {velocities_before_projection[i, j].y:.2f})v0', pos=((i+0.5)/m_g - dx * 0.25, (j+0.45)/m_g), color=0x000000)
-                gui.text(f'({velocities[i, j].x:.2f}, {velocities[i, j].y:.2f})v', pos=((i+0.5)/m_g - dx * 0.25, (j+0.25)/m_g), color=0x000000)
-
+                # gui.text(f'({velocities_before_projection[i, j].x:.2f}, {velocities_before_projection[i, j].y:.2f})v0', pos=((i+0.5)/m_g - dx * 0.25, (j+0.45)/m_g), color=0x000000)
+                # gui.text(f'({velocities[i, j].x:.2f}, {velocities[i, j].y:.2f})v', pos=((i+0.5)/m_g - dx * 0.25, (j+0.25)/m_g), color=0x000000)
+                gui.text(f'({velocities_before_projection[i, j].y:.2f})v0', pos=((i+0.5)/m_g - dx * 0.25, (j+0.45)/m_g), color=0x000000)
+                gui.text(f'({velocities[i, j].y:.2f})v', pos=((i+0.5)/m_g - dx * 0.25, (j+0.25)/m_g), color=0x000000)
     gui.circles(particle_position.to_numpy() / length, radius=2.8, color=0x3399FF)
 
     # gui.text('FLIP Blending', pos=(0.05, 0.95), color=0x0)
