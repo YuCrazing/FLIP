@@ -7,7 +7,7 @@ import time
 ti.init(arch=ti.cuda, default_fp=ti.f32, debug=False)
 
 
-res = 512 * 4
+res = 512 * 3
 # dt = 1.6e-2 #2e-3 #2e-2
 dt = 2e-2
 
@@ -19,7 +19,7 @@ FLIP_blending = 0.0
 
 
 
-m_g = 8
+m_g = 64
 n_grid = m_g*m_g
 n_particle = n_grid*4
 
@@ -32,11 +32,12 @@ boundary_width = 2
 
 eps = 1e-5
 
-debug = True
+debug = False
 
 use_weight = False
 
 # MAC grid
+visit_old = ti.field(dtype=ti.i32, shape=(m_g, m_g))
 visit = ti.field(dtype=ti.i32, shape=(m_g, m_g))
 velocities = ti.Vector.field(2, dtype=ti.f32, shape=(m_g, m_g))
 velocities_before_projection = ti.Vector.field(2, dtype=ti.f32, shape=(m_g, m_g))
@@ -73,7 +74,8 @@ def init_grid():
 def init_particle():
     for i in particle_position:
         # particle_position[i] = (ti.Vector([ti.random(), ti.random()])*0.5 + ti.Vector([0.25, 0.25])) * length
-        particle_position[i] = (ti.Vector([ti.random()*(1-12*dx), ti.random()*dx*5]) + ti.Vector([2*dx, 2*dx])) * length
+        # particle_position[i] = (ti.Vector([ti.random()*(1-12*dx), ti.random()*dx*5]) + ti.Vector([2*dx, 2*dx])) * length
+        particle_position[i] = (ti.Vector([ti.random()*0.2, ti.random()*0.3]) + ti.Vector([0.25, 0.25])) * length
         particle_velocity[i] = ti.Vector([0.0, 0.0])
 
 
@@ -184,6 +186,39 @@ def sample(i, j, field: ti.template()):
         j = m_g - boundary_width-1
     return field[i, j]
 
+
+@ti.func
+def sample_vel_grad_u(i, j):
+    vl = 0.0
+    if not is_solid(i-1, j):
+        vl = 0.5*(velocities[i-1, j] + velocities[i, j]).x
+    else:
+        vl = 0.0
+    
+    vr = 0.0
+    if not is_solid(i+1, j):
+        vr = 0.5*(velocities[i+1, j] + velocities[i, j]).x
+    else:
+        vr = 0.0
+    return (vr - vl) / dx
+
+
+@ti.func
+def sample_vel_grad_v(i, j):
+    vd = 0.0
+    if not is_solid(i, j-1):
+        vd = 0.5*(velocities[i, j-1] + velocities[i, j]).y
+    else:
+        vd = 0.0
+    
+    vu = 0.0
+    if not is_solid(i+1, j):
+        vu = 0.5*(velocities[i, j+1] + velocities[i, j]).y
+    else:
+        vu = 0.0
+    return (vu - vd) / dx
+
+
 @ti.kernel
 def solve_divergence():
 
@@ -195,7 +230,6 @@ def solve_divergence():
             v_r = velocities[i+1, j].x
             v_d = velocities[i, j-1].y
             v_u = velocities[i, j+1].y
-
             factor = 1.0
             if is_solid(i-1, j): 
                 v_l = -velocities[i, j].x * factor
@@ -205,9 +239,10 @@ def solve_divergence():
                 v_d = -velocities[i, j].y * factor
             if is_solid(i, j+1): 
                 v_u = -velocities[i, j].y * factor
-
             div = (v_r - v_l + v_u - v_d) / (dx*2)
             divergences[i, j] = div
+
+            # divergences[i, j] = sample_vel_grad_u(i, j) + sample_vel_grad_v(i, j)
 
 
 @ti.kernel
@@ -314,16 +349,6 @@ def projection():
                 grad_p.y = (pressures[i, j]-pressures[i, j-1])/dx
             velocities[i, j] -= grad_p / rho * dt
             visit[i, j] = 1
-        else: # TODO
-            if is_solid(i, j) and weights[i, j] > 0:
-                if is_solid(i-1, j) and velocities[i, j].x < 0:
-                    velocities[i, j].x = 0
-                if is_solid(i+1, j) and velocities[i, j].x > 0:
-                    velocities[i, j].x = 0
-                if is_solid(i, j-1) and velocities[i, j].y < 0:
-                    velocities[i, j].y = 0
-                if is_solid(i, j+1) and velocities[i, j].y > 0:
-                    velocities[i, j].y = 0
 
 
 @ti.kernel
@@ -331,24 +356,65 @@ def extrapolate_velocity():
     ti.loop_config(serialize=True)
     for i in range(m_g):
         for j in range(m_g):
-            if not visit[i, j]:
+            if not visit_old[i, j]:
                 count = 0
                 sum = ti.Vector([0.0, 0.0])
-                if i > 0 and visit[i-1, j] == 1:
+                if i > 0 and visit_old[i-1, j] == 1:
                     count += 1
                     sum += velocities[i-1, j]
-                if i < m_g-1 and visit[i+1, j] == 1:
+                if i < m_g-1 and visit_old[i+1, j] == 1:
                     count += 1
                     sum += velocities[i+1, j]
-                if j > 0 and visit[i, j-1] == 1:
+                if j > 0 and visit_old[i, j-1] == 1:
                     count += 1
                     sum += velocities[i, j-1]
-                if j < m_g-1 and visit[i, j+1] == 1:
+                if j < m_g-1 and visit_old[i, j+1] == 1:
                     count += 1
                     sum += velocities[i, j+1]
                 if count > 0:
                     velocities[i, j] = sum / count
                     visit[i, j] = 1
+
+@ti.kernel
+def constrain_boundary_velocity():
+    for i, j in ti.ndrange(m_g, m_g):
+        # else: # TODO
+        # if is_solid(i, j) and weights[i, j] > 0:
+        #     if is_solid(i-1, j) and velocities[i, j].x < 0:
+        #         velocities[i, j].x = 0
+        #     if is_solid(i+1, j) and velocities[i, j].x > 0:
+        #         velocities[i, j].x = 0
+        #     if is_solid(i, j-1) and velocities[i, j].y < 0:
+        #         velocities[i, j].y = 0
+        #     if is_solid(i, j+1) and velocities[i, j].y > 0:
+        #         velocities[i, j].y = 0
+        
+        # let the velocity of the wall be the negative velocity of it's nearest water cell to ensure the (average) velocity on the boundary in zero.
+        # if is_solid(i, j) and weights[i, j] > 0:
+        if is_solid(i, j):
+            if is_fluid(i+1, j) and velocities[i+1, j].x < 0:
+                velocities[i, j].x = -velocities[i+1, j].x
+            elif is_fluid(i-1, j) and velocities[i-1, j].x > 0:
+                velocities[i, j].x = -velocities[i-1, j].x
+            else:
+                velocities[i, j].x = 0.0
+            
+            if is_fluid(i, j+1) and velocities[i, j+1].y < 0:
+                velocities[i, j].y = -velocities[i, j+1].y
+            elif is_fluid(i, j-1) and velocities[i, j-1].y > 0:
+                velocities[i, j].y = -velocities[i, j-1].y
+            else:
+                velocities[i, j].y = 0.0
+
+        # if is_solid(i, j):
+        #     if is_fluid(i+1, j):
+        #         velocities[i, j].x = -velocities[i+1, j].x
+        #     if is_fluid(i-1, j):
+        #         velocities[i, j].x = -velocities[i-1, j].x
+        #     if is_fluid(i, j+1):
+        #         velocities[i, j].y = -velocities[i, j+1].y
+        #     if is_fluid(i, j-1):
+        #         velocities[i, j].y = -velocities[i, j-1].y
 
 @ti.func
 def gather(grid_v, last_grid_v, xp, stagger):
@@ -461,7 +527,10 @@ def step():
     projection()
 
     for i in range(4):
+        visit_old.copy_from(visit)
         extrapolate_velocity()
+
+    constrain_boundary_velocity()
 
 
     grid_to_particle()
@@ -498,7 +567,8 @@ for frame in range(45000):
             debug = False
 
     if not pause:
-        step()
+        for i in range(1):
+            step()
     # import time
     # time.sleep(1)
     # if debug:
@@ -522,10 +592,11 @@ for frame in range(45000):
                 gui.line([i*dx, (j+1)*dx], [(i+1)*dx, (j+1)*dx], color = 0xFF0000)
                 gui.line([(i+1)*dx, j*dx], [(i+1)*dx, (j+1)*dx], color = 0xFF0000)
                 gui.line([(i+1)*dx, j*dx], [i*dx, j*dx], color = 0xFF0000)
-                gui.text(f'{pressures[i, j]:.2f}p {types[i, j]}t', pos=((i+0.5)/m_g - dx * 0.25, (j+0.75)/m_g), color=0xFF0000)
+                # gui.text(f'{pressures[i, j]:.2f}p {types[i, j]}t', pos=((i+0.5)/m_g - dx * 0.25, (j+0.75)/m_g), color=0xFF0000)
                 # gui.text(f'({velocities_before_projection[i, j].x:.2f}, {velocities_before_projection[i, j].y:.2f})v0', pos=((i+0.5)/m_g - dx * 0.25, (j+0.45)/m_g), color=0x000000)
                 # gui.text(f'({velocities[i, j].x:.2f}, {velocities[i, j].y:.2f})v', pos=((i+0.5)/m_g - dx * 0.25, (j+0.25)/m_g), color=0x000000)
-                gui.text(f'({velocities_before_projection[i, j].y:.2f})v0', pos=((i+0.5)/m_g - dx * 0.25, (j+0.45)/m_g), color=0x000000)
+                # gui.text(f'({velocities_before_projection[i, j].y:.2f})v0', pos=((i+0.5)/m_g - dx * 0.25, (j+0.45)/m_g), color=0x000000)
+                # gui.text(f'({velocities[i, j+1].y:.2f})', pos=((i+0.5)/m_g - dx * 0.25, (j+0.45)/m_g), color=0x000000)
                 gui.text(f'({velocities[i, j].y:.2f})v', pos=((i+0.5)/m_g - dx * 0.25, (j+0.25)/m_g), color=0x000000)
     gui.circles(particle_position.to_numpy() / length, radius=2.8, color=0x3399FF)
 
