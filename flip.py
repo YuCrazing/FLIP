@@ -15,27 +15,27 @@ import time
 ti.init(arch=ti.cuda, default_fp=ti.f32, debug=False)
 
 
-res = 512
+res = 512 * 3
 dt = 2e-2 #2e-3 #2e-2
 
 
 rho = 1000
 jacobi_iters = 300
-jacobi_damped_para = 0.67
-FLIP_blending = 0.95
+jacobi_damped_para = 1
+FLIP_blending = 0.0
 
 
 
-m_g = 128
+m_g = 64
 n_grid = m_g*m_g
 n_particle = n_grid*4
 
-length = 10.0
+length = 1.0
 dx = length/m_g
 inv_dx = 1/dx
 
 # solid boundary
-boundary_width = 1
+boundary_width = 2
 
 eps = 1e-5
 
@@ -260,15 +260,56 @@ def pressure_jacobi(p:ti.template(), new_p:ti.template()):
 
 
 @ti.kernel
-def projection():
+def fill_matrix(A: ti.types.sparse_matrix_builder(), F_b: ti.types.ndarray()):
+    for I in ti.grouped(divergences):
+        F_b[I[0] * m_g + I[1]] = - divergences[I] * dx * dx * rho / dt
 
     for i, j in ti.ndrange(m_g, m_g):
+        I = i * m_g + j 
+        if is_fluid(i, j):
+            if not is_solid(i-1, j):
+                A[I, I] += 1.0
+                if not is_air(i-1, j):
+                    A[I - m_g, I] -= 1.0
+            
+            if not is_solid(i+1, j):
+                A[I, I] += 1.0
+                if not is_air(i+1, j):
+                    A[I + m_g, I] -= 1.0
+            
+            if not is_solid(i, j-1):
+                A[I, I] += 1.0
+                if not is_air(i, j-1):
+                    A[I, I - 1] -= 1.0
+                
+            if not is_solid(i, j+1):
+                A[I, I] += 1.0
+                if not is_air(i, j+1):
+                    A[I, I + 1] -= 1.0
+        else:
+            #if is_solid(i, j) or is_air(i, j)
+            A[I, I] += 1.0
+            F_b[I] = 0.0
+
+
+
+
+@ti.kernel
+def copy_pressure(p_in: ti.types.ndarray(), p_out: ti.template()):
+    for I in ti.grouped(p_out):
+        p_out[I] = p_in[I[0] * m_g + I[1]]
+
+@ti.kernel
+def projection():
+
+    for i, j in ti.ndrange(m_g+1, m_g):
         if is_fluid(i-1, j) or is_fluid(i, j):
             if is_solid(i-1, j) or is_solid(i, j):
                 velocities_u[i, j] = 0.0
             else:
                 velocities_u[i, j] -= (pressures[i, j] - pressures[i-1, j]) / dx / rho * dt
 
+    for i, j in ti.ndrange(m_g, m_g+1):
         if is_fluid(i, j-1) or is_fluid(i, j):
             if is_solid(i, j-1) or is_solid(i, j):
                 velocities_v[i, j] = 0.0
@@ -344,46 +385,6 @@ def advect_particles():
         particle_velocity[k] = vel
 
 
-@ti.kernel
-def fill_matrix(A: ti.types.sparse_matrix_builder(), F_b: ti.types.ndarray()):
-    for i, j in ti.ndrange(m_g, m_g):
-
-        I = i * m_g + j 
-
-        if is_fluid(i, j):
-            if not is_solid(i-1, j):
-                A[I, I] += 1.0
-                if not is_air(i-1, j):
-                    A[I - m_g, I] -= 1.0
-            
-            if not is_solid(i+1, j):
-                A[I, I] += 1.0
-                if not is_air(i+1, j):
-                    A[I + m_g, I] -= 1.0
-            
-            if not is_solid(i, j-1):
-                A[I, I] += 1.0
-                if not is_air(i, j-1):
-                    A[I, I - 1] -= 1.0
-                
-            if not is_solid(i, j+1):
-                A[I, I] += 1.0
-                if not is_air(i, j+1):
-                    A[I, I + 1] -= 1.0
-        else:
-            #if is_solid(i, j) or is_air(i, j)
-            A[I, I] += 1.0
-
-    for I in ti.grouped(divergences):
-        F_b[I[0] * m_g + I[1]] = - divergences[I] * dx * dx * rho / dt
-
-
-@ti.kernel
-def copy_pressure(p_in: ti.types.ndarray(), p_out: ti.template()):
-    for I in ti.grouped(p_out):
-        p_out[I] = p_in[I[0] * m_g + I[1]]
-
-
 frame = 0
 def step():
 
@@ -442,12 +443,28 @@ gui = ti.GUI("FLIP Blending", (res, res))
 # result_dir = "./result"
 # video_manager = ti.VideoManager(output_dir=result_dir, framerate=30, automatic_build=False)
 
+pause = False
 
 for frame in range(45000):
 
     gui.clear(0xFFFFFF)
 
-    step()
+    if gui.get_event(ti.GUI.PRESS):
+        e = gui.event
+        if e.key == ti.GUI.ESCAPE:
+            break
+        elif e.key == 'w':
+            pause = True
+        elif e.key == 'e':
+            pause = False
+        elif e.key == 'd':
+            debug = True
+        elif e.key == 'f':
+            debug = False
+
+
+    if not pause:
+        step()
 
 
     # break
@@ -462,12 +479,14 @@ for frame in range(45000):
                 elif types[i, j] == SOLID:
                     color = 0xFF0000
                 gui.circle([(i+0.5)/m_g, (j+0.5)/m_g], radius = 2, color = color)
-                # gui.line([i*dx, j*dx], [i*dx, (j+1)*dx], color = 0xFF0000)
-                # gui.line([i*dx, (j+1)*dx], [(i+1)*dx, (j+1)*dx], color = 0xFF0000)
-                # gui.line([(i+1)*dx, j*dx], [(i+1)*dx, (j+1)*dx], color = 0xFF0000)
-                # gui.line([(i+1)*dx, j*dx], [i*dx, j*dx], color = 0xFF0000)
-
-    gui.circles(particle_position.to_numpy() / length, radius=0.8, color=0x3399FF)
+                gui.line([i*dx, j*dx], [i*dx, (j+1)*dx], color = 0xFF0000)
+                gui.line([i*dx, (j+1)*dx], [(i+1)*dx, (j+1)*dx], color = 0xFF0000)
+                gui.line([(i+1)*dx, j*dx], [(i+1)*dx, (j+1)*dx], color = 0xFF0000)
+                gui.line([(i+1)*dx, j*dx], [i*dx, j*dx], color = 0xFF0000)
+        for i in range(m_g):
+            for j in range(m_g+1):
+                gui.text(f'({velocities_v[i, j]:.2f})v', pos=((i+0.5)/m_g - dx * 0.25, (j)/m_g + dx * 0.25), color=0x000000)
+    gui.circles(particle_position.to_numpy() / length, radius=1.8, color=0x3399FF)
 
     gui.text('FLIP Blending', pos=(0.05, 0.95), color=0x0)
 
