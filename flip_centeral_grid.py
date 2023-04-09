@@ -14,7 +14,7 @@ res = 512 * 3
 dt = 0.4e-2
 
 
-rho = 1
+rho = 1000
 jacobi_iters = 300
 jacobi_damped_para = 0.76
 FLIP_blending = 0.0
@@ -53,6 +53,9 @@ use_extrapolation = False
 gravity = ti.Vector([0.0, -9.8])
 
 record_video = False
+video_name = "video"
+video_fps = 30
+video_frame = 450
 
 # MAC grid
 visit_old_x = ti.field(dtype=ti.i32, shape=(m_g, m_g))
@@ -649,9 +652,9 @@ gui = ti.GUI("FLIP Blending", (res, res))
 result_dir = "./result"
 video_manager = None
 if record_video:
-    video_manager = ti.VideoManager(output_dir=result_dir, framerate=30, automatic_build=False, video_filename="video")
+    video_manager = ti.VideoManager(output_dir=result_dir, framerate=video_fps, automatic_build=False, video_filename=video_name)
 
-for frame in range(450 if record_video else 4500000):
+for frame in range(video_frame if record_video else 4500000):
 
     gui.clear(0xFFFFFF)
 
