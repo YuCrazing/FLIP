@@ -9,13 +9,13 @@ from stable_fluid import K
 ti.init(arch=ti.cuda, default_fp=ti.f32, debug=False)
 
 
-res = 512 * 1
+res = 512 * 3
 # dt = 1.6e-2 #2e-3 #2e-2
-dt = 3e-2
+dt = 0.4e-2
 
 
 rho = 1
-jacobi_iters = 30
+jacobi_iters = 300
 jacobi_damped_para = 0.76
 FLIP_blending = 0.0
 
@@ -44,7 +44,7 @@ LEFT_VERTICAL_STRIP = 1
 CENTER_VERTICAL_STRIP = 2
 example_case = DAM_BREAK
 
-use_jacobi = False
+use_jacobi = True
 
 use_weight = False
 
@@ -400,28 +400,29 @@ def projection():
             visit_x[i, j] = 1
             visit_y[i, j] = 1
 
-        # elif is_air(i, j):
-        #     grad_p = ti.Vector([pressures[i+1, j]-pressures[i, j], pressures[i, j+1]-pressures[i, j]]) / dx
-        #     if is_fluid(i+1, j):
-        #         velocities[i, j].x -= grad_p.x / rho * dt
-        #         visit_x[i, j] = 1
-        #     elif is_fluid(i-1, j):
-        #         grad_p.x = (pressures[i, j]-pressures[i-1, j])/dx
-        #         velocities[i, j].x -= grad_p.x / rho * dt
-        #         visit_x[i, j] = 1
-        #     else:
-        #         pass
-        #         # visit_x[i, j] = 1
+        # air cells
+        elif is_air(i, j):
+            grad_p = ti.Vector([pressures[i+1, j]-pressures[i, j], pressures[i, j+1]-pressures[i, j]]) / dx
+            if is_fluid(i+1, j):
+                velocities[i, j].x -= grad_p.x / rho * dt
+                visit_x[i, j] = 1
+            elif is_fluid(i-1, j):
+                grad_p.x = (pressures[i, j]-pressures[i-1, j])/dx
+                velocities[i, j].x -= grad_p.x / rho * dt
+                visit_x[i, j] = 1
+            else:
+                pass
+                # visit_x[i, j] = 1
 
-        #     if is_fluid(i, j+1):
-        #         velocities[i, j].y -= grad_p.y / rho * dt
-        #         visit_y[i, j] = 1
-        #     elif is_fluid(i, j-1):
-        #         grad_p.y = (pressures[i, j]-pressures[i, j-1])/dx
-        #         velocities[i, j].y -= grad_p.y / rho * dt
-        #         visit_y[i, j] = 1
-        #     else:
-        #         pass
+            if is_fluid(i, j+1):
+                velocities[i, j].y -= grad_p.y / rho * dt
+                visit_y[i, j] = 1
+            elif is_fluid(i, j-1):
+                grad_p.y = (pressures[i, j]-pressures[i, j-1])/dx
+                velocities[i, j].y -= grad_p.y / rho * dt
+                visit_y[i, j] = 1
+            else:
+                pass
 
 
     for i, j in ti.ndrange(m_g, m_g):
@@ -622,8 +623,8 @@ def step():
             pressures, new_pressures = new_pressures, pressures
 
 
-    # init_solid()
 
+    # init_solid()
     projection()
 
     
@@ -725,6 +726,8 @@ for frame in range(450 if record_video else 4500000):
             gui.text(f'  - Iteration Num: {jacobi_iters}', pos=pos, color=0x0, font_size=(res//512)*15)
             pos[1] -= offset[1]
             gui.text(f'  - Damping Para: {jacobi_damped_para}', pos=pos, color=0x0, font_size=(res//512)*15)
+        pos[1] -= offset[1]
+        gui.text(f'* FLIP Blending: {FLIP_blending}', pos=pos, color=0x0, font_size=(res//512)*15)
         video_manager.write_frame(gui.get_image())	
     gui.show()
 
