@@ -9,19 +9,19 @@ from stable_fluid import K
 ti.init(arch=ti.cuda, default_fp=ti.f32, debug=False)
 
 
-res = 512 * 3
+res = 512 * 1
 # dt = 1.6e-2 #2e-3 #2e-2
 dt = 0.4e-2
 
 
-rho = 1000
-jacobi_iters = 300
+rho = 1
+jacobi_iters = 6
 jacobi_damped_para = 0.76
 FLIP_blending = 0.0
 
 
 
-m_g = 64
+m_g = 128
 n_grid = m_g*m_g
 n_particle = n_grid*4
 
@@ -40,15 +40,16 @@ debug = False
 pause = False
 
 DAM_BREAK = 0
-LEFT_VERTICAL_STRIP = 1
-CENTER_VERTICAL_STRIP = 2
-example_case = DAM_BREAK
+CENTER_DAM_BREAK = 1
+LEFT_VERTICAL_STRIP = 2
+CENTER_VERTICAL_STRIP = 3
+example_case = CENTER_DAM_BREAK
 
 use_jacobi = True
 
-use_weight = False
+# use_weight = False
 
-use_extrapolation = False
+use_extrapolation = True
 
 gravity = ti.Vector([0.0, -9.8])
 
@@ -100,6 +101,8 @@ def init_particle():
             particle_position[i] = (ti.Vector([ti.random(), ti.random()])*0.5 + ti.Vector([0.05, 0.05])) * length
             # particle_position[i] = (ti.Vector([ti.random()*(1-12*dx), ti.random()*dx*5]) + ti.Vector([2*dx, 2*dx])) * length
             # particle_position[i] = (ti.Vector([ti.random()*0.2, ti.random()*0.3]) + ti.Vector([0.25, 0.25])) * length
+        elif example_case == CENTER_DAM_BREAK:
+            particle_position[i] = (ti.Vector([ti.random(), ti.random()])*0.5 + ti.Vector([0.3, 0.3])) * length
         elif example_case == LEFT_VERTICAL_STRIP:
             particle_position[i] = (ti.Vector([ti.random()*3*dx, ti.random()*length-dx*boundary_width-dx*boundary_width - 0*dx]) + ti.Vector([dx*boundary_width, dx*boundary_width]))
         elif example_case == CENTER_VERTICAL_STRIP:
@@ -198,7 +201,8 @@ def grid_normalization():
 @ti.kernel
 def apply_gravity():
     for i, j in velocities:
-        # if not is_solid(i, j-1) and not is_solid(i, j):
+        # Is this better? No
+        if not is_solid(i, j):
             velocities[i, j] += gravity * dt
 
 
@@ -403,29 +407,29 @@ def projection():
             visit_x[i, j] = 1
             visit_y[i, j] = 1
 
-        # air cells
-        elif is_air(i, j):
-            grad_p = ti.Vector([pressures[i+1, j]-pressures[i, j], pressures[i, j+1]-pressures[i, j]]) / dx
-            if is_fluid(i+1, j):
-                velocities[i, j].x -= grad_p.x / rho * dt
-                visit_x[i, j] = 1
-            elif is_fluid(i-1, j):
-                grad_p.x = (pressures[i, j]-pressures[i-1, j])/dx
-                velocities[i, j].x -= grad_p.x / rho * dt
-                visit_x[i, j] = 1
-            else:
-                pass
-                # visit_x[i, j] = 1
+        # # air cells. Is this better? No if velocity extrapolation enables.
+        # elif is_air(i, j):
+        #     grad_p = ti.Vector([pressures[i+1, j]-pressures[i, j], pressures[i, j+1]-pressures[i, j]]) / dx
+        #     if is_fluid(i+1, j):
+        #         velocities[i, j].x -= grad_p.x / rho * dt
+        #         visit_x[i, j] = 1
+        #     elif is_fluid(i-1, j):
+        #         grad_p.x = (pressures[i, j]-pressures[i-1, j])/dx
+        #         velocities[i, j].x -= grad_p.x / rho * dt
+        #         visit_x[i, j] = 1
+        #     else:
+        #         pass
+        #         # visit_x[i, j] = 1
 
-            if is_fluid(i, j+1):
-                velocities[i, j].y -= grad_p.y / rho * dt
-                visit_y[i, j] = 1
-            elif is_fluid(i, j-1):
-                grad_p.y = (pressures[i, j]-pressures[i, j-1])/dx
-                velocities[i, j].y -= grad_p.y / rho * dt
-                visit_y[i, j] = 1
-            else:
-                pass
+        #     if is_fluid(i, j+1):
+        #         velocities[i, j].y -= grad_p.y / rho * dt
+        #         visit_y[i, j] = 1
+        #     elif is_fluid(i, j-1):
+        #         grad_p.y = (pressures[i, j]-pressures[i, j-1])/dx
+        #         velocities[i, j].y -= grad_p.y / rho * dt
+        #         visit_y[i, j] = 1
+        #     else:
+        #         pass
 
 
     for i, j in ti.ndrange(m_g, m_g):
@@ -446,6 +450,26 @@ def projection():
                 velocities[i, j].y = - velocities[i, j+1].y
                 # visit_x[i, j] = 1
                 visit_y[i, j] = 1
+
+
+    # for i, j in ti.ndrange(m_g, m_g):
+    #     if is_solid(i, j):
+    #         if not is_solid(i-1, j):
+    #             velocities[i, j] = - velocities[i-1, j]
+    #             visit_x[i, j] = 1
+    #             visit_y[i, j] = 1
+    #         if not is_solid(i+1, j):
+    #             velocities[i, j] = - velocities[i+1, j]
+    #             visit_x[i, j] = 1
+    #             visit_y[i, j] = 1
+    #         if not is_solid(i, j-1):
+    #             velocities[i, j] = - velocities[i, j-1]
+    #             visit_x[i, j] = 1
+    #             visit_y[i, j] = 1
+    #         if not is_solid(i, j+1):
+    #             velocities[i, j] = - velocities[i, j+1]
+    #             visit_x[i, j] = 1
+    #             visit_y[i, j] = 1
 
     # for i, j in ti.ndrange(m_g, m_g):
     #     # let the velocity of the wall be the negative velocity of it's nearest water cell to ensure the (average) velocity on the boundary in zero.
@@ -632,7 +656,7 @@ def step():
 
     
     if use_extrapolation:
-        for i in range(4):
+        for i in range(2):
             visit_old_x.copy_from(visit_x)
             visit_old_y.copy_from(visit_y)
             extrapolate_velocity()
@@ -705,7 +729,7 @@ for frame in range(video_frame if record_video else 4500000):
                 # gui.text(f'({velocities_before_projection[i, j].y:.2f})v0', pos=((i+0.5)/m_g - dx * 0.25, (j+0.45)/m_g), color=0x000000)
                 # gui.text(f'({velocities[i, j+1].y:.2f})', pos=((i+0.5)/m_g - dx * 0.25, (j+0.45)/m_g), color=0x000000)
                 # gui.text(f'({velocities[i, j].x:.2f})v', pos=((i+0.5)/m_g - dx * 0.25, (j+0.25)/m_g), color=0x000000)
-    gui.circles(particle_position.to_numpy() / length, radius=2.8, color=0x3399FF)
+    gui.circles(particle_position.to_numpy() / length, radius=1.0*(res//512), color=0x3399FF)
 
 
     if record_video:
