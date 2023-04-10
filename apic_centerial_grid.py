@@ -15,7 +15,7 @@ dt = 0.4e-2
 
 
 rho = 1
-jacobi_iters = 6
+jacobi_iters = 600
 jacobi_damped_para = 0.76
 FLIP_blending = 0.0
 
@@ -83,6 +83,7 @@ types = ti.field(dtype=ti.i32, shape=(m_g, m_g))
 
 particle_velocity = ti.Vector.field(2, dtype=ti.f32, shape=n_particle)
 particle_position = ti.Vector.field(2, dtype=ti.f32, shape=n_particle)
+particle_C = ti.Matrix.field(2, 2, dtype=ti.f32, shape=n_particle)
 
 
 
@@ -108,6 +109,7 @@ def init_particle():
         elif example_case == CENTER_VERTICAL_STRIP:
             particle_position[i] = (ti.Vector([ti.random()*3*dx, ti.random()*length-dx*boundary_width-dx*boundary_width - 0*dx]) + ti.Vector([0.5*length-dx, dx*boundary_width]))
         particle_velocity[i] = ti.Vector([0.0, 0.0])
+        particle_C[i] = ti.Matrix([[0, 0], [0, 0]])
 
 
 @ti.func
@@ -161,7 +163,7 @@ def init_step():
 
 
 @ti.func
-def scatter(grid_v, grid_m, xp, vp, stagger, pid):
+def scatter(grid_v, grid_m, xp, vp, affine, stagger):
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
@@ -171,7 +173,8 @@ def scatter(grid_v, grid_m, xp, vp, stagger, pid):
         for j in ti.static(range(3)):
             offset = ti.Vector([i, j])
             weight = w[i][0] * w[j][1]
-            grid_v[base + offset] += weight * vp
+            dpos = (offset.cast(float) - fx) * dx
+            grid_v[base + offset] += weight * (vp + affine@dpos)
             grid_m[base + offset] += weight
 
 
@@ -182,10 +185,11 @@ def particle_to_grid():
 
         pos = particle_position[k]
         vel = particle_velocity[k]
+        affine = particle_C[k]
 
         stagger = ti.Vector([0.5, 0.5])
 
-        scatter(velocities, weights, pos, vel, stagger, k)
+        scatter(velocities, weights, pos, vel, affine, stagger)
 
 
 @ti.kernel
@@ -543,17 +547,21 @@ def gather(grid_v, last_grid_v, xp, stagger):
 
     w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
 
-    v_pic = ti.Vector([0.0, 0.0])
+    v_apic = ti.Vector([0.0, 0.0])
     v_flip = ti.Vector([0.0, 0.0])
+    new_C = ti.Matrix([[0.0, 0.0], [0.0, 0.0]])
 
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = ti.Vector([i, j])
             weight = w[i][0] * w[j][1]
-            v_pic  += weight * grid_v[base + offset]
+            dpos = (offset.cast(float) - fx) * dx
+            g_v = grid_v[base + ti.Vector([i, j])]
+            v_apic  += weight * grid_v[base + offset]
             v_flip += weight * (grid_v[base + offset] - last_grid_v[base + offset])
+            new_C += 4 * inv_dx * weight * g_v.outer_product(dpos)
 
-    return v_pic, v_flip
+    return v_apic, v_flip, new_C
 
 
 @ti.kernel
@@ -565,12 +573,13 @@ def grid_to_particle():
     
         p = particle_position[k]
 
-        pic_x, flip_dx = gather(velocities, last_velocities, p, stagger)
+        v_apic, flip_dv, new_C = gather(velocities, last_velocities, p, stagger)
 
-        pic_vel = pic_x
-        flip_vel = particle_velocity[k] + flip_dx
+        pic_vel = v_apic
+        flip_vel = particle_velocity[k] + flip_dv
 
         particle_velocity[k] = (1.0-FLIP_blending) * pic_vel + FLIP_blending * flip_vel
+        particle_C[k] = new_C
 
 
 @ti.kernel
