@@ -161,7 +161,7 @@ def init_step():
 
 
 @ti.func
-def scatter(grid_v, grid_m, xp, vp, stagger, pid):
+def scatter(grid_v, grid_m, xp, vp, stagger):
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
@@ -185,7 +185,7 @@ def particle_to_grid():
 
         stagger = ti.Vector([0.5, 0.5])
 
-        scatter(velocities, weights, pos, vel, stagger, k)
+        scatter(velocities, weights, pos, vel, stagger)
 
 
 @ti.kernel
