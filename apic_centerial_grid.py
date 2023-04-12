@@ -748,7 +748,7 @@ for frame in range(video_frame if record_video else 4500000):
         pos[1] -= offset[1]
         gui.text(f'* Time step: {dt}', pos=pos, color=0x0, font_size=(res//512)*15)
         pos[1] -= offset[1]
-        gui.text(f'* Subtemp Num: {substep_num}', pos=pos, color=0x0, font_size=(res//512)*15)
+        gui.text(f'* Substep Num: {substep_num}', pos=pos, color=0x0, font_size=(res//512)*15)
         pos[1] -= offset[1]
         gui.text(f'* Grid Res: {m_g}', pos=pos, color=0x0, font_size=(res//512)*15)
         pos[1] -= offset[1]
