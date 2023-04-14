@@ -3,9 +3,6 @@ import taichi as ti
 import numpy as np
 import time
 
-from stable_fluid import K
-
-
 ti.init(arch=ti.cuda, default_fp=ti.f32, debug=False)
 
 
