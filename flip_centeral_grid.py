@@ -8,7 +8,7 @@ ti.init(arch=ti.cuda, default_fp=ti.f32, debug=False)
 
 res = 512 * 1
 # dt = 1.6e-2 #2e-3 #2e-2
-dt = 0.4e-2
+dt = (0.4e-2) * 2**5
 
 
 rho = 1
@@ -18,7 +18,7 @@ FLIP_blending = 0.0
 
 
 
-m_g = 128
+m_g = 8
 n_grid = m_g*m_g
 n_particle = n_grid*4
 
@@ -33,7 +33,7 @@ boundary_width = 1
 
 eps = 1e-5
 
-debug = False
+debug = True
 pause = False
 
 DAM_BREAK = 0
